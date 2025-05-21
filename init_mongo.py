@@ -19,15 +19,112 @@ import plotly.graph_objects as go
 from fpdf import FPDF
 from auth import login_user, register_user, update_user_tier, hash_password
 import h5py
+from shapely.geometry import Polygon
 
-# Import our new satellite data manager
-from satellite_data_manager import SatelliteDataManager
+# Google Maps API key
+GOOGLE_MAPS_API_KEY = "AIzaSyBW1YE7uSlLvYFrpwXSsljEJU_dTVQFrG0"
 
 # Page config
 st.set_page_config(page_title="Satellite Risk Assessment", page_icon="🛰️", layout="wide")
 
+# Custom CSS for a more appealing home page
+st.markdown("""
+<style>
+    .main-title {
+        font-size: 3.5rem !important;
+        color: #2E86C1;
+        text-align: center;
+        margin-bottom: 1rem;
+        font-weight: 700;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+    }
+    .subtitle {
+        font-size: 1.5rem !important;
+        color: #5D6D7E;
+        text-align: center;
+        margin-bottom: 3rem;
+        font-weight: 300;
+    }
+    .tier-header {
+        background-color: #f0f8ff;
+        padding: 10px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 10px;
+        font-weight: 600;
+        color: #2874A6;
+    }
+    .tier-price {
+        font-size: 1.8rem !important;
+        font-weight: 700;
+        color: #16A085;
+        text-align: center;
+        margin: 10px 0;
+    }
+    .tier-feature {
+        padding: 5px 0;
+        border-bottom: 1px solid #eee;
+    }
+    .tier-card {
+        background-color: white;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        height: 100%;
+        transition: transform 0.3s ease;
+    }
+    .tier-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    }
+    .get-started-section {
+        background-color: #f8f9fa;
+        padding: 2rem;
+        border-radius: 10px;
+        margin-top: 3rem;
+        text-align: center;
+    }
+    .stButton>button {
+        background-color: #2E86C1;
+        color: white;
+        border-radius: 5px;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        border: none;
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover {
+        background-color: #1A5276;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    .benefit-icon {
+        font-size: 2.5rem;
+        margin-bottom: 1rem;
+        color: #3498DB;
+    }
+    .benefit-title {
+        font-weight: 600;
+        font-size: 1.2rem;
+        margin-bottom: 0.5rem;
+        color: #2C3E50;
+    }
+    .benefit-description {
+        color: #7F8C8D;
+        font-size: 0.9rem;
+    }
+    .benefit-card {
+        background-color: white;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        text-align: center;
+        height: 100%;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Session state initialization
-for key in ["authenticated", "username", "tier", "page", "location", "selected", "page_history"]:
+for key in ["authenticated", "username", "tier", "page", "location", "selected", "page_history", "selected_polygon"]:
     if key not in st.session_state:
         if key == "authenticated":
             st.session_state[key] = False
@@ -45,57 +142,186 @@ def go_to_page(new_page):
     st.rerun()
 
 
-# Welcome page with tiered plans
+# Function to get location coordinates from Google Maps API
+def get_location_coordinates(city_name):
+    url = "https://maps.googleapis.com/maps/api/geocode/json"
+    params = {
+        "address": city_name,
+        "key": GOOGLE_MAPS_API_KEY
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=5)
+        response.raise_for_status()
+
+        data = response.json()
+
+        if "results" in data and len(data["results"]) > 0:
+            location = data["results"][0]["geometry"]["location"]
+            lat, lon = location["lat"], location["lng"]
+            return lat, lon
+        else:
+            st.error("⚠️ Invalid location or server did not return correct data.")
+            return None
+
+    except requests.exceptions.Timeout:
+        st.error("⏳ Request took too long! Check your internet connection.")
+    except requests.exceptions.RequestException as e:
+        st.error(f"❌ Network error: {e}")
+    except Exception as e:
+        st.error(f"⚠️ Unknown error: {e}")
+
+    return None
+
+
+# Calculate center of a polygon
+def calculate_polygon_center(polygon_coordinates):
+    try:
+        if not polygon_coordinates:
+            return None
+
+        # Create a Shapely polygon
+        polygon = Polygon(polygon_coordinates)
+
+        # Get the centroid
+        centroid = polygon.centroid
+
+        # Return the coordinates [lat, lon]
+        return [centroid.y, centroid.x]
+    except Exception as e:
+        st.error(f"Error calculating polygon center: {e}")
+        return None
+
+
+# Welcome page
 def welcome_page():
-    st.title("🛰️ Welcome to Satellite Risk Assessment")
-    st.subheader("Analyze environmental risks for your agricultural land")
+    # Main title with custom styling
+    st.markdown('<h1 class="main-title">🛰️ Satellite Risk Assessment</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Advanced environmental monitoring for agriculture using satellite data</p>',
+                unsafe_allow_html=True)
+
+    # Hero image
     st.image("Free-Satellite-Imagery.jpg", use_container_width=True)
 
-    st.header("Choose Your Plan")
+    # Key benefits section
+    st.markdown("## Why Choose Our Platform")
+
+    benefit_col1, benefit_col2, benefit_col3 = st.columns(3)
+
+    with benefit_col1:
+        st.markdown('<div class="benefit-card">', unsafe_allow_html=True)
+        st.markdown('<div class="benefit-icon">🌡️</div>', unsafe_allow_html=True)
+        st.markdown('<div class="benefit-title">Real-time Climate Monitoring</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="benefit-description">Access up-to-date temperature, rainfall, and soil data collected from satellites.</div>',
+            unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with benefit_col2:
+        st.markdown('<div class="benefit-card">', unsafe_allow_html=True)
+        st.markdown('<div class="benefit-icon">📊</div>', unsafe_allow_html=True)
+        st.markdown('<div class="benefit-title">Data-Driven Insights</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="benefit-description">Make informed decisions based on comprehensive analysis and visualizations.</div>',
+            unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with benefit_col3:
+        st.markdown('<div class="benefit-card">', unsafe_allow_html=True)
+        st.markdown('<div class="benefit-icon">🌾</div>', unsafe_allow_html=True)
+        st.markdown('<div class="benefit-title">Crop-Specific Recommendations</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="benefit-description">Receive tailored advice for your specific crops and growing conditions.</div>',
+            unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # Subscription tiers
+    st.markdown("## Choose Your Plan", unsafe_allow_html=True)
+
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.subheader("Basic")
-        st.write("Free / 5€ per use")
-        st.write("✓ Min/max temperatures (3 months)")
-        st.write("✓ Monthly rainfall analysis")
-        st.write("✓ Rainfall days per month")
-        st.write("✓ Longest dry period")
-        st.write("✓ Soil temperature estimates")
-        st.write("✓ Basic maps")
+        st.markdown('<div class="tier-card">', unsafe_allow_html=True)
+        st.markdown('<div class="tier-header">Basic</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tier-price">5 €</div>', unsafe_allow_html=True)
+
+        features = [
+            "Min/max temperatures (3 months)",
+            "Monthly rainfall analysis",
+            "Rainfall days per month",
+            "Longest dry period",
+            "Soil temperature estimates",
+            "Basic maps"
+        ]
+
+        for feature in features:
+            st.markdown(f'<div class="tier-feature">✓ {feature}</div>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with col2:
-        st.subheader("Standard")
-        st.write("15€ per use")
-        st.write("✓ All Basic features")
-        st.write("✓ 12 months of historical data")
-        st.write("✓ Year-to-year comparison")
-        st.write("✓ Heat stress indicators")
-        st.write("✓ Temperature heatmaps")
-        st.write("✓ PDF report exports")
+        st.markdown('<div class="tier-card">', unsafe_allow_html=True)
+        st.markdown('<div class="tier-header">Standard</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tier-price">15 €</div>', unsafe_allow_html=True)
+
+        features = [
+            "All Basic features",
+            "12 months of historical data",
+            "Year-to-year comparison",
+            "Heat stress indicators",
+            "Temperature heatmaps",
+            "PDF report exports"
+        ]
+
+        for feature in features:
+            st.markdown(f'<div class="tier-feature">✓ {feature}</div>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with col3:
-        st.subheader("Premium")
-        st.write("30€ per use")
-        st.write("✓ All Standard features")
-        st.write("✓ Weather alerts")
-        st.write("✓ Land surface temperature data")
-        st.write("✓ Crop-specific impact analysis")
-        st.write("✓ 30-day weather predictions")
-        st.write("✓ Expert recommendations")
-        st.write("✓ AI Agronom Assistant")
+        st.markdown('<div class="tier-card">', unsafe_allow_html=True)
+        st.markdown('<div class="tier-header">Premium</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tier-price">30 €</div>', unsafe_allow_html=True)
 
-    st.header("Get Started")
-    col1, col2 = st.columns(2)
-    if col1.button("Login"):
-        st.session_state.page = "login"
-        st.rerun()
-    if col2.button("Register"):
-        st.session_state.page = "register"
-        st.rerun()
-    if st.button("Try Demo Version"):
-        st.session_state.update(authenticated=True, username="demo_user", tier="basic", page="location")
-        st.rerun()
+        features = [
+            "All Standard features",
+            "Weather alerts",
+            "Land surface temperature data",
+            "Crop-specific impact analysis",
+            "30-day weather predictions",
+            "Expert recommendations",
+            "AI Agronom Assistant"
+        ]
+
+        for feature in features:
+            st.markdown(f'<div class="tier-feature">✓ {feature}</div>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # Get started section
+    st.markdown('<div class="get-started-section">', unsafe_allow_html=True)
+    st.markdown("### Get Started Today", unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1, 1])
+
+    with col1:
+        if st.button("Login"):
+            st.session_state.page = "login"
+            st.rerun()
+
+    with col2:
+        if st.button("Register"):
+            st.session_state.page = "register"
+            st.rerun()
+
+    with col3:
+        if st.button("Try Demo"):
+            st.session_state.update(authenticated=True, username="demo_user", tier="basic", page="location")
+            st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # Login page
@@ -152,13 +378,20 @@ def upgrade_page():
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.markdown("### Basic")
-        st.write("Free / 5€ per use")
-        st.write("✓ Min/max temperatures (3 months)")
-        st.write("✓ Monthly rainfall analysis")
-        st.write("✓ Rainfall days per month")
-        st.write("✓ Longest dry period")
-        st.write("✓ Soil temperature estimates")
+        st.markdown('<div class="tier-card">', unsafe_allow_html=True)
+        st.markdown('<div class="tier-header">Basic</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tier-price">5 €</div>', unsafe_allow_html=True)
+
+        features = [
+            "Min/max temperatures (3 months)",
+            "Monthly rainfall analysis",
+            "Rainfall days per month",
+            "Longest dry period",
+            "Soil temperature estimates"
+        ]
+
+        for feature in features:
+            st.markdown(f'<div class="tier-feature">✓ {feature}</div>', unsafe_allow_html=True)
 
         if st.session_state.tier != "basic" and st.button("Select Basic", key="select_basic"):
             if update_user_tier(st.session_state.username, "basic"):
@@ -173,14 +406,23 @@ def upgrade_page():
             else:
                 st.error("Failed to update plan. Please try again.")
 
+        st.markdown('</div>', unsafe_allow_html=True)
+
     with col2:
-        st.markdown("### Standard")
-        st.write("15€ per use")
-        st.write("✓ All Basic features")
-        st.write("✓ 12 months of historical data")
-        st.write("✓ Year-to-year comparison")
-        st.write("✓ Heat stress indicators")
-        st.write("✓ PDF report exports")
+        st.markdown('<div class="tier-card">', unsafe_allow_html=True)
+        st.markdown('<div class="tier-header">Standard</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tier-price">15 €</div>', unsafe_allow_html=True)
+
+        features = [
+            "All Basic features",
+            "12 months of historical data",
+            "Year-to-year comparison",
+            "Heat stress indicators",
+            "PDF report exports"
+        ]
+
+        for feature in features:
+            st.markdown(f'<div class="tier-feature">✓ {feature}</div>', unsafe_allow_html=True)
 
         if st.session_state.tier != "standard" and st.button("Select Standard", key="select_standard"):
             # Here you might integrate with a payment processor
@@ -196,15 +438,24 @@ def upgrade_page():
             else:
                 st.error("Failed to update plan. Please try again.")
 
+        st.markdown('</div>', unsafe_allow_html=True)
+
     with col3:
-        st.markdown("### Premium")
-        st.write("30€ per use")
-        st.write("✓ All Standard features")
-        st.write("✓ Weather alerts")
-        st.write("✓ Land surface temperature data")
-        st.write("✓ Crop-specific impact analysis")
-        st.write("✓ 30-day weather predictions")
-        st.write("✓ Expert recommendations")
+        st.markdown('<div class="tier-card">', unsafe_allow_html=True)
+        st.markdown('<div class="tier-header">Premium</div>', unsafe_allow_html=True)
+        st.markdown('<div class="tier-price">30 €</div>', unsafe_allow_html=True)
+
+        features = [
+            "All Standard features",
+            "Weather alerts",
+            "Land surface temperature data",
+            "Crop-specific impact analysis",
+            "30-day weather predictions",
+            "Expert recommendations"
+        ]
+
+        for feature in features:
+            st.markdown(f'<div class="tier-feature">✓ {feature}</div>', unsafe_allow_html=True)
 
         if st.session_state.tier != "premium" and st.button("Select Premium", key="select_premium"):
             # Here you might integrate with a payment processor
@@ -220,6 +471,8 @@ def upgrade_page():
             else:
                 st.error("Failed to update plan. Please try again.")
 
+        st.markdown('</div>', unsafe_allow_html=True)
+
     if st.button("Back to Application"):
         st.session_state.page = "location"
         st.rerun()
@@ -229,15 +482,56 @@ def location_page():
     st.title("🗺️ Select Assessment Location")
 
     # User instruction
-    st.write("Please select a location to analyze by clicking on the map or searching for an address.")
+    st.write("Please select a location to analyze by searching for an address or drawing a polygon on the map.")
 
-    col1, col2 = st.columns([3, 1])
+    tab1, tab2 = st.tabs(["Search by Address", "Select on Map"])
 
-    with col1:
-        # Initialize map centered on Europe
-        m = folium.Map(location=[48.8566, 2.3522], zoom_start=4)
+    with tab1:
+        # Address search using Google Maps API
+        st.subheader("Search by Address")
+        address = st.text_input("Enter address or location")
+        search_col1, search_col2 = st.columns([3, 1])
 
-        # Add drawing tools to allow selection of regions
+        with search_col1:
+            if st.button("Search") and address:
+                try:
+                    # Use Google Maps API to find coordinates
+                    coordinates = get_location_coordinates(address)
+                    if coordinates:
+                        lat, lon = coordinates
+                        st.success(f"Location found: {address} (Lat: {lat:.4f}, Lon: {lon:.4f})")
+
+                        # Store coordinates in session state
+                        st.session_state.location = {"type": "Point", "coordinates": [lon, lat]}
+                        st.session_state.selected = True
+
+                        # Show a small preview map
+                        m = folium.Map(location=[lat, lon], zoom_start=13)
+                        folium.Marker([lat, lon], popup=address).add_to(m)
+                        st_folium(m, width=600, height=300)
+                    else:
+                        st.error("Location not found. Please try a different address.")
+                except Exception as e:
+                    st.error(f"Error finding location: {str(e)}")
+
+    with tab2:
+        # Map selection with drawing tools
+        st.subheader("Draw Area on Map")
+
+        # Default map center (if no location selected yet)
+        default_lat, default_lon = 48.8566, 2.3522  # Paris by default
+
+        # If we already have a location, center the map there
+        if st.session_state.location and "coordinates" in st.session_state.location:
+            map_lon = st.session_state.location["coordinates"][0]
+            map_lat = st.session_state.location["coordinates"][1]
+        else:
+            map_lat, map_lon = default_lat, default_lon
+
+        # Initialize map
+        m = folium.Map(location=[map_lat, map_lon], zoom_start=10)
+
+        # Add drawing tools
         draw = Draw(
             draw_options={
                 'polyline': False,
@@ -247,7 +541,7 @@ def location_page():
                 'marker': True,
                 'circlemarker': False
             },
-            edit_options={'edit': False}
+            edit_options={'edit': True}
         )
         draw.add_to(m)
 
@@ -255,27 +549,22 @@ def location_page():
         map_data = st_folium(m, width=700, height=500)
 
         # Process map selection
-        if map_data["last_active_drawing"]:
-            st.session_state.location = map_data["last_active_drawing"]
+        if map_data and map_data.get("last_active_drawing"):
+            drawing = map_data["last_active_drawing"]
+            st.session_state.location = drawing
             st.session_state.selected = True
 
-    with col2:
-        # Address search
-        st.subheader("Search by Address")
-        address = st.text_input("Enter address or location")
+            # If it's a polygon, store the coordinates and calculate center
+            if drawing["type"] in ["Polygon", "Rectangle"]:
+                polygon_coords = drawing["coordinates"][0]
+                st.session_state.selected_polygon = polygon_coords
 
-        if st.button("Search") and address:
-            try:
-                # This would normally use Google Maps API for geocoding
-                # For demo purposes, we'll just pretend it worked
-                st.success(f"Location found: {address}")
-
-                # In a real app, you would geocode the address and set the location
-                st.session_state.location = {"type": "Point", "coordinates": [2.3522, 48.8566]}
-                st.session_state.selected = True
-
-            except Exception as e:
-                st.error(f"Error finding location: {str(e)}")
+                # Calculate and store the polygon center
+                center = calculate_polygon_center(polygon_coords)
+                if center:
+                    st.success(f"Polygon center: Lat {center[0]:.4f}, Lon {center[1]:.4f}")
+                    # Update location to use the polygon center
+                    st.session_state.location = {"type": "Point", "coordinates": [center[1], center[0]]}
 
     # Selected location information
     if st.session_state.selected:
@@ -310,7 +599,7 @@ def location_page():
             st.rerun()
 
 
-# Import the analysis_page function from our updated implementation
+# Import the analysis_page function from satellite_data_manager
 from satellite_data_manager import analysis_page
 
 

@@ -536,16 +536,20 @@ class SatelliteDataManager:
                 )
                 results["temp_comparison_chart"] = temp_comparison_fig
 
+                # Safely process month data without datetime conversion
+                comparison_df["month_num"] = comparison_df["month_only"].apply(
+                    lambda x: x.split("-")[0] if isinstance(x, str) and "-" in x else "01"
+                )
+
                 rain_comparison_fig = px.bar(
-                    comparison_df.groupby(
-                        ["year", pd.to_datetime(comparison_df["month_only"], format='%m-%d').dt.strftime('%m')]).agg({
+                    comparison_df.groupby(["year", "month_num"]).agg({
                         "precip": "sum"
                     }).reset_index(),
-                    x="month_only",
+                    x="month_num",
                     y="precip",
                     color="year",
                     barmode="group",
-                    labels={"month_only": "Month", "precip": "Total Rainfall (mm)", "year": "Year"},
+                    labels={"month_num": "Month", "precip": "Total Rainfall (mm)", "year": "Year"},
                     title="Monthly Rainfall Comparison: Current vs. Previous Year"
                 )
                 results["rain_comparison_chart"] = rain_comparison_fig

@@ -1,8 +1,4 @@
-import folium
-import requests
 import streamlit as st
-from streamlit_folium import st_folium
-from folium.plugins import draw
 
 # Setăm titlul aplicației
 st.set_page_config(page_title="Login & Map", page_icon="🌍", layout="centered")
@@ -36,8 +32,6 @@ def login_page():
         st.rerun()
 
 # Funcție pentru a obține coordonatele localității
-import requests
-import streamlit as st
 
 GOOGLE_MAPS_API_KEY = "AIzaSyBW1YE7uSlLvYFrpwXSsljEJU_dTVQFrG0"
 
